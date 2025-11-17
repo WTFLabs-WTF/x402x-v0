@@ -312,7 +312,7 @@ export class X402Server {
       if (!result.success) {
         return {
           success: false,
-          error: result.error || result.errorMessage || "Verification failed",
+          error: result.errorMessage || "Verification failed",
         };
       }
 
@@ -357,7 +357,7 @@ export class X402Server {
       if (!result.success) {
         return {
           success: false,
-          error: result.error || result.errorMessage || "Settlement failed",
+          error: result.errorMessage || "Settlement failed",
         };
       }
 

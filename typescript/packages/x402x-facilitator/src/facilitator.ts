@@ -102,11 +102,11 @@ export class Facilitator {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = await response.json() as { message?: string };
         return {
           success: false,
           error: `Verification failed: ${response.status}`,
-          errorMessage: errorText,
+          errorMessage: errorText.message,
         };
       }
 
@@ -160,11 +160,11 @@ export class Facilitator {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = await response.json() as { message?: string };
         return {
           success: false,
           error: `Settlement failed: ${response.status}`,
-          errorMessage: errorText,
+          errorMessage: errorText.message,
         };
       }
 
