@@ -27,6 +27,7 @@ import {
   VerifyResponse,
 } from "../../../../types/verify";
 import { SCHEME } from "../..";
+import { simulateTransaction } from "../utils/transactionSimulation";
 
 // ERC165 ABI for supportsInterface
 const ERC165_ABI = [
@@ -237,6 +238,82 @@ export async function verify<
     };
   }
 
+  // 链上交易模拟：验证交易在链上是否能够成功执行
+  // 根据是否有 witness 模拟不同的调用
+  let simulationResult;
+  if (hasWitness) {
+    // 模拟调用 permitWitnessTransferFrom
+    simulationResult = await simulateTransaction(client, {
+      address: PERMIT2_ADDRESS,
+      abi: permit2ABI,
+      functionName: "permitWitnessTransferFrom",
+      args: [
+        {
+          permitted: {
+            token: tokenAddress,
+            amount: BigInt(amount),
+          },
+          nonce: BigInt(nonce),
+          deadline: BigInt(deadline),
+        },
+        {
+          to: paymentRequirements.payTo as Address,
+          requestedAmount: BigInt(amount),
+        },
+        ownerAddress,
+        keccak256(encodeAbiParameters([{ type: "address", name: "to" }], [getAddress(to!)])),
+        WITNESS_TYPE_STRING,
+        permit2Payload.signature as Hex,
+      ],
+      account: client.account?.address,
+    });
+  } else {
+    // 模拟调用 permitTransferFrom
+    simulationResult = await simulateTransaction(client, {
+      address: PERMIT2_ADDRESS,
+      abi: permit2ABI,
+      functionName: "permitTransferFrom",
+      args: [
+        {
+          permitted: {
+            token: tokenAddress,
+            amount: BigInt(amount),
+          },
+          nonce: BigInt(nonce),
+          deadline: BigInt(deadline),
+        },
+        {
+          to: paymentRequirements.payTo as Address,
+          requestedAmount: BigInt(amount),
+        },
+        ownerAddress,
+        permit2Payload.signature as Hex,
+      ],
+      account: client.account?.address,
+    });
+  }
+
+  if (!simulationResult.success) {
+    console.error("Permit2 transaction simulation failed:", simulationResult.error);
+    if (simulationResult.logs) {
+      simulationResult.logs.forEach(log => console.error("  ", log));
+    }
+    if (simulationResult.logs?.join("\n").includes("0xe2853741")) {
+      return {
+        isValid: false,
+        invalidReason: "transaction_simulation_hook_failed",
+        payer: owner,
+        logs: simulationResult.logs,
+      };
+    }
+    return {
+      isValid: false,
+      invalidReason: "transaction_simulation_failed",
+      payer: owner,
+      logs: simulationResult.logs,
+    };
+  }
+
   return {
     isValid: true,
     payer: owner,
@@ -396,47 +473,47 @@ export function prepareSettleCall(
   // Call permitTransferFrom or permitWitnessTransferFrom on Permit2 contract
   const callData = hasWitness
     ? encodeFunctionData({
-        abi: permit2ABI,
-        functionName: "permitWitnessTransferFrom",
-        args: [
-          {
-            permitted: {
-              token: tokenAddress,
-              amount: BigInt(amount),
-            },
-            nonce: BigInt(nonce),
-            deadline: BigInt(deadline),
+      abi: permit2ABI,
+      functionName: "permitWitnessTransferFrom",
+      args: [
+        {
+          permitted: {
+            token: tokenAddress,
+            amount: BigInt(amount),
           },
-          {
-            to: paymentRequirements.payTo as Address,
-            requestedAmount: BigInt(amount),
-          },
-          ownerAddress,
-          keccak256(encodeAbiParameters([{ type: "address", name: "to" }], [getAddress(to!)])),
-          WITNESS_TYPE_STRING,
-          permit2Payload.signature as Hex,
-        ],
-      })
+          nonce: BigInt(nonce),
+          deadline: BigInt(deadline),
+        },
+        {
+          to: paymentRequirements.payTo as Address,
+          requestedAmount: BigInt(amount),
+        },
+        ownerAddress,
+        keccak256(encodeAbiParameters([{ type: "address", name: "to" }], [getAddress(to!)])),
+        WITNESS_TYPE_STRING,
+        permit2Payload.signature as Hex,
+      ],
+    })
     : encodeFunctionData({
-        abi: permit2ABI,
-        functionName: "permitTransferFrom",
-        args: [
-          {
-            permitted: {
-              token: tokenAddress,
-              amount: BigInt(amount),
-            },
-            nonce: BigInt(nonce),
-            deadline: BigInt(deadline),
+      abi: permit2ABI,
+      functionName: "permitTransferFrom",
+      args: [
+        {
+          permitted: {
+            token: tokenAddress,
+            amount: BigInt(amount),
           },
-          {
-            to: paymentRequirements.payTo as Address,
-            requestedAmount: BigInt(amount),
-          },
-          ownerAddress,
-          permit2Payload.signature as Hex,
-        ],
-      });
+          nonce: BigInt(nonce),
+          deadline: BigInt(deadline),
+        },
+        {
+          to: paymentRequirements.payTo as Address,
+          requestedAmount: BigInt(amount),
+        },
+        ownerAddress,
+        permit2Payload.signature as Hex,
+      ],
+    });
 
   return {
     target: PERMIT2_ADDRESS,

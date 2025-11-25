@@ -22,6 +22,7 @@ export * as permit2 from "./permit2";
 // Export utilities
 export * from "./utils/paymentUtils";
 export * from "./utils/tokenDetection";
+export * from "./utils/transactionSimulation";
 
 /**
  * Unified verify function that routes to the appropriate authorization type handler

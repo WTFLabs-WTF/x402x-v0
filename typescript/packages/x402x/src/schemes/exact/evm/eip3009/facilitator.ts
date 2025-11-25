@@ -26,6 +26,7 @@ import {
   Eip3009PaymentPayload,
 } from "../../../../types/verify";
 import { SCHEME } from "../..";
+import { simulateTransaction } from "../utils/transactionSimulation";
 
 // ERC165 ABI for supportsInterface
 const ERC165_ABI = [
@@ -219,6 +220,89 @@ export async function verify<
       payer: exactEvmPayload.authorization.from,
     };
   }
+
+  // 链上交易模拟：验证交易在链上是否能够成功执行
+  // 拆分签名为 v, r, s
+  const { signature } = parseErc6492Signature(exactEvmPayload.signature as Hex);
+  const sig = hexToSignature(signature);
+  const v = Number(sig.v);
+  const r = sig.r;
+  const s = sig.s;
+
+  // 检查 payTo 地址是否支持 settleWithERC3009 接口
+  let supportsSettleWithERC3009 = false;
+  try {
+    supportsSettleWithERC3009 = await client.readContract({
+      address: paymentRequirements.payTo as Address,
+      abi: ERC165_ABI,
+      functionName: "supportsInterface",
+      args: [SETTLE_WITH_ERC3009_INTERFACE_ID],
+    });
+  } catch {
+    supportsSettleWithERC3009 = false;
+  }
+
+  // 根据是否支持 settleWithERC3009 模拟不同的调用
+  let simulationResult;
+  if (supportsSettleWithERC3009) {
+    // 模拟调用 7702 合约的 settleWithERC3009
+    simulationResult = await simulateTransaction(client, {
+      address: paymentRequirements.payTo as Address,
+      abi: EIP7702SellerWalletMinimalAbi,
+      functionName: "settleWithERC3009",
+      args: [
+        paymentRequirements.asset as Address,
+        exactEvmPayload.authorization.from as Address,
+        BigInt(exactEvmPayload.authorization.value),
+        BigInt(exactEvmPayload.authorization.validAfter),
+        BigInt(exactEvmPayload.authorization.validBefore),
+        exactEvmPayload.authorization.nonce as Hex,
+        v,
+        r,
+        s,
+      ],
+    });
+  } else {
+    // 模拟调用 token 合约的 transferWithAuthorization
+    simulationResult = await simulateTransaction(client, {
+      address: paymentRequirements.asset as Address,
+      abi: TRANSFER_WITH_AUTHORIZATION_ABI,
+      functionName: "transferWithAuthorization",
+      args: [
+        exactEvmPayload.authorization.from as Address,
+        paymentRequirements.payTo as Address,
+        BigInt(exactEvmPayload.authorization.value),
+        BigInt(exactEvmPayload.authorization.validAfter),
+        BigInt(exactEvmPayload.authorization.validBefore),
+        exactEvmPayload.authorization.nonce as Hex,
+        v,
+        r,
+        s,
+      ],
+    });
+  }
+
+  if (!simulationResult.success) {
+    console.error("EIP-3009 transaction simulation failed:", simulationResult.error);
+    if (simulationResult.logs) {
+      simulationResult.logs.forEach(log => console.error("  ", log));
+    }
+    if (simulationResult.logs?.join("\n").includes("0xe2853741")) {
+      return {
+        isValid: false,
+        invalidReason: "transaction_simulation_hook_failed",
+        payer: exactEvmPayload.authorization.from,
+        logs: simulationResult.logs,
+      };
+    }
+    return {
+      isValid: false,
+      invalidReason: "transaction_simulation_failed",
+      payer: exactEvmPayload.authorization.from,
+      logs: simulationResult.logs,
+    };
+  }
+
   return {
     isValid: true,
     invalidReason: undefined,

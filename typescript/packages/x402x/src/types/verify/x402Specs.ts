@@ -73,6 +73,9 @@ export const ErrorReasons = [
   "seller_does_not_support_settle_with_permit",
   "seller_does_not_support_settle_with_permit2",
   "seller_interface_check_failed",
+  // Transaction simulation errors
+  "transaction_simulation_failed",
+  "transaction_simulation_hook_failed",
 ] as const;
 
 // Refiners
@@ -288,6 +291,7 @@ export const VerifyResponseSchema = z.object({
   isValid: z.boolean(),
   invalidReason: z.enum(ErrorReasons).optional(),
   payer: EvmOrSvmAddress.optional(),
+  logs: z.array(z.string()).optional(),
 });
 export type VerifyResponse = z.infer<typeof VerifyResponseSchema>;
 

@@ -16,6 +16,7 @@ import {
 import { SCHEME } from "../..";
 import { splitSignature } from "./sign";
 import { EIP7702SellerWalletMinimalAbi } from "../../../../types/shared/evm";
+import { simulateTransaction } from "../utils/transactionSimulation";
 
 // ERC165 ABI for supportsInterface
 const ERC165_ABI = [
@@ -185,6 +186,40 @@ export async function verify<
     };
   }
 
+  // 链上交易模拟：验证交易在链上是否能够成功执行
+  // 拆分签名为 v, r, s
+  const { v: sigV, r: sigR, s: sigS } = splitSignature(permitPayload.signature as Hex);
+  const tokenAddress = paymentRequirements.asset as Address;
+
+  // 模拟调用 7702 合约的 settleWithPermit
+  const simulationResult = await simulateTransaction(client, {
+    address: paymentRequirements.payTo as Address,
+    abi: EIP7702SellerWalletMinimalAbi,
+    functionName: "settleWithPermit",
+    args: [tokenAddress, owner as Address, BigInt(value), BigInt(deadline), sigV, sigR, sigS],
+  });
+
+  if (!simulationResult.success) {
+    console.error("Permit transaction simulation failed:", simulationResult.error);
+    if (simulationResult.logs) {
+      simulationResult.logs.forEach(log => console.error("  ", log));
+    }
+    if (simulationResult.logs?.join("\n").includes("0xe2853741")) {
+      return {
+        isValid: false,
+        invalidReason: "transaction_simulation_hook_failed",
+        payer: owner,
+        logs: simulationResult.logs,
+      };
+    }
+    return {
+      isValid: false,
+      invalidReason: "transaction_simulation_failed",
+      payer: owner,
+      logs: simulationResult.logs,
+    };
+  }
+
   return {
     isValid: true,
     payer: owner,
@@ -305,15 +340,7 @@ export function prepareSettleCall(
   const callData = encodeFunctionData({
     abi: EIP7702SellerWalletMinimalAbi,
     functionName: "settleWithPermit",
-    args: [
-      tokenAddress,
-      owner as Address,
-      BigInt(value),
-      BigInt(deadline),
-      v,
-      r,
-      s,
-    ],
+    args: [tokenAddress, owner as Address, BigInt(value), BigInt(deadline), v, r, s],
   });
 
   return {
