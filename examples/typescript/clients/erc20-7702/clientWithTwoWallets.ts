@@ -23,28 +23,48 @@ if (clientPrivateKey && !clientPrivateKey.startsWith("0x")) {
   clientPrivateKey = `0x${clientPrivateKey}` as Hex;
 }
 
+let clientPrivateKey2 = process.env.CLIENT_PRIVATE_KEY2 as Hex | undefined;
+if (clientPrivateKey2 && !clientPrivateKey2.startsWith("0x")) {
+  clientPrivateKey2 = `0x${clientPrivateKey2}` as Hex;
+}
+
 const providerUrl = process.env.PROVIDER_URL;
 
-if (!clientPrivateKey || !providerUrl) {
-  console.error("Missing CLIENT_PRIVATE_KEY or PROVIDER_URL in .env file");
+if (!clientPrivateKey || !clientPrivateKey2 || !providerUrl) {
+  console.error("Missing CLIENT_PRIVATE_KEY, CLIENT_PRIVATE_KEY2 or PROVIDER_URL in .env file");
   process.exit(1);
 }
 
 // Constants
 const RESOURCE_SERVER_URL = "http://localhost:4025"; // Different port for this example
 
-// Setup client wallet
-const clientAccount = privateKeyToAccount(clientPrivateKey as Hex);
-const clientWallet = createWalletClient({
-  account: clientAccount,
+// Setup client wallet 1
+const clientAccount1 = privateKeyToAccount(clientPrivateKey as Hex);
+const clientWallet1 = createWalletClient({
+  account: clientAccount1,
   chain: bscTestnet,
   transport: http(providerUrl),
 }).extend(publicActions);
 
-// Create a fetch function with x402 payment support
-const fetchWithPay = wrapFetchWithPayment(
+// Create a fetch function with x402 payment support for wallet 1
+const fetchWithPay1 = wrapFetchWithPayment(
   fetch,
-  clientWallet,
+  clientWallet1,
+  BigInt(1000000000000000000) // Max 0.05 USDC (50000 wei)
+);
+
+// Setup client wallet 2
+const clientAccount2 = privateKeyToAccount(clientPrivateKey2 as Hex);
+const clientWallet2 = createWalletClient({
+  account: clientAccount2,
+  chain: bscTestnet,
+  transport: http(providerUrl),
+}).extend(publicActions);
+
+// Create a fetch function with x402 payment support for wallet 2
+const fetchWithPay2 = wrapFetchWithPayment(
+  fetch,
+  clientWallet2,
   BigInt(1000000000000000000) // Max 0.05 USDC (50000 wei)
 );
 
@@ -52,12 +72,19 @@ const fetchWithPay = wrapFetchWithPayment(
  * Make a request to a resource server endpoint using x402-fetch
  * The payment handling is automatic!
  */
-async function makePaymentRequest(endpoint: string, tokenName: string) {
+async function makePaymentRequest(
+  endpoint: string,
+  tokenName: string,
+  fetchWithPay: any,
+  clientAddress: Address,
+  walletNumber: number
+) {
   try {
     console.log(`\n${'='.repeat(50)}`);
     console.log(`🚀 Making request to ${endpoint}...`);
     console.log(`   Token: ${tokenName}`);
-    console.log(`   Client: ${clientAccount.address}`);
+    console.log(`   Wallet: #${walletNumber}`);
+    console.log(`   Client: ${clientAddress}`);
     console.log(`${'='.repeat(50)}`);
 
     // Make request - x402-fetch will automatically handle 402 responses
@@ -91,25 +118,34 @@ async function makePaymentRequest(endpoint: string, tokenName: string) {
 
 // Run the example
 console.log(`\n═══════════════════════════════════════════`);
-console.log(`   ERC20 x402 Example (7702)`);
+console.log(`   ERC20 x402 Example (7702) - 双钱包测试`);
 console.log(`═══════════════════════════════════════════`);
-console.log(`\n💡 Testing payment methods:`);
-console.log(`   /permit  - Permit Token using EIP-2612 → 7702`);
+console.log(`\n💡 Testing payment methods with TWO wallets:`);
+console.log(`   Wallet 1: ${clientAccount1.address}`);
+console.log(`   Wallet 2: ${clientAccount2.address}`);
+console.log(`\n   /permit  - Permit Token using EIP-2612 → 7702`);
 console.log(`   /eip3009 - EIP-3009 TransferWithAuthorization`);
 console.log(`\n   EIP-3009 supports both 7702 contract and native calls!`);
 console.log(`   Payment automatically detects contract capabilities.`);
 
 (async () => {
-  // 测试 Permit Token 端点
-  console.log(`\n\n📍 Testing Permit Token Endpoint`);
-  await makePaymentRequest("/permit", "Permit Token (EIP-2612)");
+  // 使用钱包 1 测试 Permit Token 端点
+  console.log(`\n\n📍 Testing Permit Token Endpoint with Wallet 1`);
+  makePaymentRequest("/permit", "Permit Token (EIP-2612)", fetchWithPay1, clientAccount1.address, 1);
 
-  // 测试 EIP-3009 Token 端点
-  // console.log(`\n\n📍 Testing EIP-3009 Token Endpoint`);
-  // await makePaymentRequest("/eip3009", "EIP-3009 Token (TransferWithAuthorization)");
+  // 使用钱包 2 测试 Permit Token 端点
+  console.log(`\n\n📍 Testing Permit Token Endpoint with Wallet 2`);
+  makePaymentRequest("/permit", "Permit Token (EIP-2612)", fetchWithPay2, clientAccount2.address, 2);
+
+  // 测试 EIP-3009 Token 端点（可选）
+  // console.log(`\n\n📍 Testing EIP-3009 Token Endpoint with Wallet 1`);
+  // await makePaymentRequest("/eip3009", "EIP-3009 Token (TransferWithAuthorization)", fetchWithPay1, clientAccount1.address, 1);
+
+  // console.log(`\n\n📍 Testing EIP-3009 Token Endpoint with Wallet 2`);
+  // await makePaymentRequest("/eip3009", "EIP-3009 Token (TransferWithAuthorization)", fetchWithPay2, clientAccount2.address, 2);
 
   console.log(`\n\n${'='.repeat(50)}`);
-  console.log(`✅ Test completed!`);
+  console.log(`✅ 双钱包测试完成！`);
   console.log(`${'='.repeat(50)}\n`);
 })().catch(console.error);
 

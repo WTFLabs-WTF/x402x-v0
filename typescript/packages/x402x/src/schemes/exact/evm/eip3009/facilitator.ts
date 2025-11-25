@@ -2,6 +2,7 @@ import {
   Account,
   Address,
   Chain,
+  encodeFunctionData,
   getAddress,
   Hex,
   parseErc6492Signature,
@@ -358,5 +359,62 @@ export async function settle<transport extends Transport, chain extends Chain>(
     transaction: tx,
     network: paymentPayload.network,
     payer: payload.authorization.from,
+  };
+}
+
+/**
+ * Prepares the contract call data for EIP-3009 settlement without executing it
+ * This is used for batch settlement via multicall
+ *
+ * @param paymentPayload - The signed payment payload containing the transfer parameters and signature
+ * @param paymentRequirements - The original payment details
+ * @returns Contract call parameters (target, calldata) for use in multicall
+ */
+export function prepareSettleCall(
+  paymentPayload: Eip3009PaymentPayload,
+  paymentRequirements: PaymentRequirements,
+): {
+  target: Address;
+  callData: Hex;
+  value: bigint;
+} {
+  const payload = paymentPayload.payload as ExactEvmPayload;
+
+  if (payload.authorizationType !== "eip3009") {
+    throw new Error("Invalid authorization type for EIP-3009");
+  }
+
+  // Returns the original signature (no-op) if the signature is not a 6492 signature
+  const { signature } = parseErc6492Signature(payload.signature as Hex);
+  const sig = hexToSignature(signature);
+  const v = Number(sig.v);
+  const r = sig.r;
+  const s = sig.s;
+
+  // Note: In a real multicall scenario, we would need to check if the target supports
+  // settleWithERC3009 before creating the call. For now, we assume it does.
+  // The caller should verify this beforehand or handle both cases.
+
+  // Prepare call to 7702 contract's settleWithERC3009 method
+  const callData = encodeFunctionData({
+    abi: EIP7702SellerWalletMinimalAbi,
+    functionName: "settleWithERC3009",
+    args: [
+      paymentRequirements.asset as Address,
+      payload.authorization.from as Address,
+      BigInt(payload.authorization.value),
+      BigInt(payload.authorization.validAfter),
+      BigInt(payload.authorization.validBefore),
+      payload.authorization.nonce as Hex,
+      v,
+      r,
+      s,
+    ],
+  });
+
+  return {
+    target: paymentRequirements.payTo as Address,
+    callData,
+    value: 0n,
   };
 }

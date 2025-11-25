@@ -20,7 +20,7 @@ const PORT = 4025;
 // 代币地址
 const PERMIT_TOKEN_ADDRESS = "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d" as Hex; // permit token
 const EIP3009_TOKEN_ADDRESS = "0xF0EBB572643336834d516C485ad31d3299999999" as Hex; // EIP-3009 token
-const PAYMENT_AMOUNT = "1000"; // 1 USDC (1000000000000000000 wei, assuming 18 decimals)
+const PAYMENT_AMOUNT = "1000000000000000000"; // 1 USDC (1000000000000000000 wei, assuming 18 decimals)
 const PROVIDER_URL = process.env.PROVIDER_URL || "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
 // 收款地址 - 7702合约地址（用户的EIP-7702授权地址）
 const RECIPIENT_ADDRESS =

@@ -3,6 +3,7 @@ import {
   Address,
   Chain,
   encodeAbiParameters,
+  encodeFunctionData,
   getAddress,
   Hex,
   keccak256,
@@ -360,5 +361,86 @@ export async function settle<transport extends Transport, chain extends Chain>(
     transaction: tx,
     network: paymentPayload.network,
     payer: owner,
+  };
+}
+
+/**
+ * Prepares the contract call data for Permit2 settlement without executing it
+ * This is used for batch settlement via multicall
+ *
+ * @param paymentPayload - The signed payment payload containing permit2 parameters and signature
+ * @param paymentRequirements - The payment requirements
+ * @returns Contract call parameters (target, calldata) for use in multicall
+ */
+export function prepareSettleCall(
+  paymentPayload: Permit2PaymentPayload,
+  paymentRequirements: PaymentRequirements,
+): {
+  target: Address;
+  callData: Hex;
+  value: bigint;
+} {
+  const permit2Payload = paymentPayload.payload;
+
+  if (permit2Payload.authorizationType !== "permit2") {
+    throw new Error("Invalid authorization type for Permit2");
+  }
+
+  const { owner, token, amount, deadline, nonce, to } = permit2Payload.authorization;
+  const tokenAddress = getAddress(token);
+  const ownerAddress = getAddress(owner);
+
+  // Detect witness mode
+  const hasWitness = !!to;
+
+  // Call permitTransferFrom or permitWitnessTransferFrom on Permit2 contract
+  const callData = hasWitness
+    ? encodeFunctionData({
+        abi: permit2ABI,
+        functionName: "permitWitnessTransferFrom",
+        args: [
+          {
+            permitted: {
+              token: tokenAddress,
+              amount: BigInt(amount),
+            },
+            nonce: BigInt(nonce),
+            deadline: BigInt(deadline),
+          },
+          {
+            to: paymentRequirements.payTo as Address,
+            requestedAmount: BigInt(amount),
+          },
+          ownerAddress,
+          keccak256(encodeAbiParameters([{ type: "address", name: "to" }], [getAddress(to!)])),
+          WITNESS_TYPE_STRING,
+          permit2Payload.signature as Hex,
+        ],
+      })
+    : encodeFunctionData({
+        abi: permit2ABI,
+        functionName: "permitTransferFrom",
+        args: [
+          {
+            permitted: {
+              token: tokenAddress,
+              amount: BigInt(amount),
+            },
+            nonce: BigInt(nonce),
+            deadline: BigInt(deadline),
+          },
+          {
+            to: paymentRequirements.payTo as Address,
+            requestedAmount: BigInt(amount),
+          },
+          ownerAddress,
+          permit2Payload.signature as Hex,
+        ],
+      });
+
+  return {
+    target: PERMIT2_ADDRESS,
+    callData,
+    value: 0n,
   };
 }

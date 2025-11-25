@@ -1,4 +1,4 @@
-import { Account, Chain, Transport } from "viem";
+import { Account, Address, Chain, Hex, Transport } from "viem";
 import { ConnectedClient, SignerWallet } from "../../../types/shared/evm";
 import {
   PaymentPayload,
@@ -121,5 +121,48 @@ export async function settle<transport extends Transport, chain extends Chain>(
         network: paymentPayload.network,
         payer: "",
       };
+  }
+}
+
+/**
+ * Prepares contract call data for settlement without executing it
+ * This is used for batch settlement via multicall
+ *
+ * @param paymentPayload - The signed payment payload
+ * @param paymentRequirements - The payment requirements
+ * @returns Contract call parameters (target, calldata, value) for use in multicall
+ */
+export function prepareSettleCall(
+  paymentPayload: PaymentPayload,
+  paymentRequirements: PaymentRequirements,
+): {
+  target: Address;
+  callData: Hex;
+  value: bigint;
+} {
+  const payload = paymentPayload.payload as ExactEvmPayload;
+
+  // Route to appropriate preparation based on authorization type
+  switch (payload.authorizationType) {
+    case "eip3009":
+      return eip3009Facilitator.prepareSettleCall(
+        paymentPayload as Eip3009PaymentPayload,
+        paymentRequirements,
+      );
+
+    case "permit":
+      return permitFacilitator.prepareSettleCall(
+        paymentPayload as PermitPaymentPayload,
+        paymentRequirements,
+      );
+
+    case "permit2":
+      return permit2Facilitator.prepareSettleCall(
+        paymentPayload as Permit2PaymentPayload,
+        paymentRequirements,
+      );
+
+    default:
+      throw new Error("Unsupported authorization type");
   }
 }

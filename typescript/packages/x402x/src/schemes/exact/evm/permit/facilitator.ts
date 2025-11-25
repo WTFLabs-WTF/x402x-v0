@@ -1,4 +1,4 @@
-import { Account, Address, Chain, getAddress, Hex, Transport } from "viem";
+import { Account, Address, Chain, encodeFunctionData, getAddress, Hex, Transport } from "viem";
 import { getNetworkId } from "../../../../shared";
 import { getERC20Balance, getVersion } from "../../../../shared/evm";
 import {
@@ -272,5 +272,53 @@ export async function settle<transport extends Transport, chain extends Chain>(
     transaction: transactionHash,
     network: paymentPayload.network,
     payer: owner,
+  };
+}
+
+/**
+ * Prepares the contract call data for Permit settlement without executing it
+ * This is used for batch settlement via multicall
+ *
+ * @param paymentPayload - The signed payment payload containing permit parameters and signature
+ * @param paymentRequirements - The payment requirements
+ * @returns Contract call parameters (target, calldata) for use in multicall
+ */
+export function prepareSettleCall(
+  paymentPayload: PermitPaymentPayload,
+  paymentRequirements: PaymentRequirements,
+): {
+  target: Address;
+  callData: Hex;
+  value: bigint;
+} {
+  const permitPayload = paymentPayload.payload;
+
+  if (permitPayload.authorizationType !== "permit") {
+    throw new Error("Invalid authorization type for Permit");
+  }
+
+  const { owner, value, deadline } = permitPayload.authorization;
+  const { v, r, s } = splitSignature(permitPayload.signature as Hex);
+  const tokenAddress = paymentRequirements.asset as Address;
+
+  // Prepare call to 7702 contract's settleWithPermit method
+  const callData = encodeFunctionData({
+    abi: EIP7702SellerWalletMinimalAbi,
+    functionName: "settleWithPermit",
+    args: [
+      tokenAddress,
+      owner as Address,
+      BigInt(value),
+      BigInt(deadline),
+      v,
+      r,
+      s,
+    ],
+  });
+
+  return {
+    target: paymentRequirements.payTo as Address,
+    callData,
+    value: 0n,
   };
 }
