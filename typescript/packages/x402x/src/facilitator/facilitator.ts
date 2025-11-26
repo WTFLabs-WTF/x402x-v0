@@ -20,23 +20,7 @@ import {
 } from "../types/verify";
 import { Address, Chain, decodeEventLog, Hex, keccak256, Transport, Account } from "viem";
 import { KeyPairSigner } from "@solana/kit";
-
-// SettlementExecuted 事件 ABI - 7702 合约在 settle 成功时触发
-const SETTLEMENT_EXECUTED_EVENT_ABI = {
-  anonymous: false,
-  inputs: [
-    { indexed: true, name: "token", type: "address" },
-    { indexed: true, name: "payer", type: "address" },
-    { indexed: true, name: "facilitator", type: "address" },
-    { indexed: false, name: "sigHash", type: "bytes32" },
-    { indexed: false, name: "amount", type: "uint256" },
-    { indexed: false, name: "beneficiaryAmount", type: "uint256" },
-    { indexed: false, name: "feeAmount", type: "uint256" },
-    { indexed: false, name: "method", type: "string" },
-  ],
-  name: "SettlementExecuted",
-  type: "event",
-} as const;
+import { EIP7702SellerWalletMinimalAbi } from "../types/shared/evm";
 
 /**
  * Verifies a payment payload against the required payment details regardless of the scheme
@@ -472,7 +456,7 @@ async function parseSettleResults(
   for (const log of receipt.logs) {
     try {
       const decoded = decodeEventLog({
-        abi: [SETTLEMENT_EXECUTED_EVENT_ABI],
+        abi: EIP7702SellerWalletMinimalAbi,
         data: log.data,
         topics: [...log.topics] as [Hex, ...Hex[]],
       });
