@@ -4,7 +4,22 @@
 export const EIP7702SellerWalletMinimalAbi = [
   {
     inputs: [],
+    name: "HookFailed",
+    type: "error",
+  },
+  {
+    inputs: [],
     name: "InvalidAmount",
+    type: "error",
+  },
+  {
+    inputs: [],
+    name: "InvalidFee",
+    type: "error",
+  },
+  {
+    inputs: [],
+    name: "InvalidHookResponse",
     type: "error",
   },
   {
@@ -42,6 +57,24 @@ export const EIP7702SellerWalletMinimalAbi = [
         name: "beneficiary",
         type: "address",
       },
+      {
+        indexed: true,
+        internalType: "address",
+        name: "hooks",
+        type: "address",
+      },
+      {
+        indexed: false,
+        internalType: "uint8",
+        name: "hookFlags",
+        type: "uint8",
+      },
+      {
+        indexed: false,
+        internalType: "uint96",
+        name: "feeBps",
+        type: "uint96",
+      },
     ],
     name: "ConfigUpdated",
     type: "event",
@@ -63,6 +96,12 @@ export const EIP7702SellerWalletMinimalAbi = [
       },
       {
         indexed: true,
+        internalType: "bytes32",
+        name: "sigHash",
+        type: "bytes32",
+      },
+      {
+        indexed: false,
         internalType: "address",
         name: "facilitator",
         type: "address",
@@ -101,6 +140,19 @@ export const EIP7702SellerWalletMinimalAbi = [
   },
   {
     inputs: [],
+    name: "AFTER_SETTLE_FLAG",
+    outputs: [
+      {
+        internalType: "uint8",
+        name: "",
+        type: "uint8",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
     name: "BASIS_POINTS",
     outputs: [
       {
@@ -114,7 +166,20 @@ export const EIP7702SellerWalletMinimalAbi = [
   },
   {
     inputs: [],
-    name: "FEE_BPS",
+    name: "BEFORE_SETTLE_FLAG",
+    outputs: [
+      {
+        internalType: "uint8",
+        name: "",
+        type: "uint8",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "DEFAULT_FEE_BPS",
     outputs: [
       {
         internalType: "uint96",
@@ -140,12 +205,66 @@ export const EIP7702SellerWalletMinimalAbi = [
   },
   {
     inputs: [],
+    name: "MAX_FEE_BPS",
+    outputs: [
+      {
+        internalType: "uint96",
+        name: "",
+        type: "uint96",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "MIN_FEE_BPS",
+    outputs: [
+      {
+        internalType: "uint96",
+        name: "",
+        type: "uint96",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "PERMIT2",
+    outputs: [
+      {
+        internalType: "address",
+        name: "",
+        type: "address",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
     name: "getConfig",
     outputs: [
       {
         internalType: "address",
         name: "beneficiary",
         type: "address",
+      },
+      {
+        internalType: "address",
+        name: "hooks",
+        type: "address",
+      },
+      {
+        internalType: "uint8",
+        name: "hookFlags",
+        type: "uint8",
+      },
+      {
+        internalType: "uint96",
+        name: "feeBps",
+        type: "uint96",
       },
       {
         internalType: "bool",
@@ -167,6 +286,21 @@ export const EIP7702SellerWalletMinimalAbi = [
       },
       {
         internalType: "address",
+        name: "hooks",
+        type: "address",
+      },
+      {
+        internalType: "bool",
+        name: "beforeSettle",
+        type: "bool",
+      },
+      {
+        internalType: "bool",
+        name: "afterSettle",
+        type: "bool",
+      },
+      {
+        internalType: "address",
         name: "feeRecipient",
         type: "address",
       },
@@ -174,6 +308,11 @@ export const EIP7702SellerWalletMinimalAbi = [
         internalType: "uint96",
         name: "feeBps",
         type: "uint96",
+      },
+      {
+        internalType: "bool",
+        name: "initialized",
+        type: "bool",
       },
     ],
     stateMutability: "view",
@@ -390,6 +529,58 @@ export const EIP7702SellerWalletMinimalAbi = [
   {
     inputs: [
       {
+        components: [
+          {
+            components: [
+              {
+                internalType: "address",
+                name: "token",
+                type: "address",
+              },
+              {
+                internalType: "uint256",
+                name: "amount",
+                type: "uint256",
+              },
+            ],
+            internalType: "struct IPermit2.TokenPermissions",
+            name: "permitted",
+            type: "tuple",
+          },
+          {
+            internalType: "uint256",
+            name: "nonce",
+            type: "uint256",
+          },
+          {
+            internalType: "uint256",
+            name: "deadline",
+            type: "uint256",
+          },
+        ],
+        internalType: "struct IPermit2.PermitTransferFrom",
+        name: "permit",
+        type: "tuple",
+      },
+      {
+        internalType: "address",
+        name: "payer",
+        type: "address",
+      },
+      {
+        internalType: "bytes",
+        name: "signature",
+        type: "bytes",
+      },
+    ],
+    name: "settleWithPermit2",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
         internalType: "bytes4",
         name: "interfaceId",
         type: "bytes4",
@@ -413,6 +604,26 @@ export const EIP7702SellerWalletMinimalAbi = [
         name: "beneficiary_",
         type: "address",
       },
+      {
+        internalType: "address",
+        name: "hooks_",
+        type: "address",
+      },
+      {
+        internalType: "bool",
+        name: "beforeSettle_",
+        type: "bool",
+      },
+      {
+        internalType: "bool",
+        name: "afterSettle_",
+        type: "bool",
+      },
+      {
+        internalType: "uint96",
+        name: "feeBps_",
+        type: "uint96",
+      },
     ],
     name: "updateConfig",
     outputs: [],
@@ -424,4 +635,3 @@ export const EIP7702SellerWalletMinimalAbi = [
     type: "receive",
   },
 ] as const;
-
