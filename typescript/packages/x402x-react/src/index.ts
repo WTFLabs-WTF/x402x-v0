@@ -8,32 +8,15 @@ import type { WalletClient } from 'viem';
 import createFetchWithProxyHeader from './lib/x402-helpers';
 import type { UseMutationOptions } from '@tanstack/react-query';
 
-// API response wrapper type
-export interface ApiResponse<T> {
-  code: number;
-  data: T;
-  message: string;
-}
-
-// Payment response data type
-export interface X402PaymentResponse {
-  success: boolean;
-  network: string;
-  payer: string;
-  txHash: string;
-  asset: string;
-  amount: string;
-  recipient: string;
-  description?: string;
-}
-
-export interface UseX402PaymentOptions {
+export interface UseX402PaymentOptions<TData = unknown> {
   targetUrl: string;         // Payment resource URL
   value?: bigint;             // Payment amount (wei)
   paymentType?: string;      // Payment type (default 'permit')
   walletClient?: WalletClient; // Wallet client from wagmi
   init?: RequestInit;        // Fetch options
-  mutationOptions?: Omit<UseMutationOptions<X402PaymentResponse, Error>, 'mutationFn'>;
+  // Allow user to process the response
+  onSuccess?: (response: Response) => Promise<TData>;
+  mutationOptions?: Omit<UseMutationOptions<TData, Error>, 'mutationFn'>;
 }
 
 /**
@@ -44,43 +27,35 @@ export interface UseX402PaymentOptions {
  * - Generate Permit/EIP3009 signature
  * - Submit payment data
  */
-export function useX402Payment(options: UseX402PaymentOptions) {
+export function useX402Payment<TData = unknown>(options: UseX402PaymentOptions<TData>) {
   const {
     targetUrl,
     value,
     paymentType = 'permit',
     walletClient,
     init,
+    onSuccess,
     mutationOptions,
   } = options;
 
-  return useMutation<X402PaymentResponse, Error>({
+  return useMutation<TData, Error>({
     mutationFn: async () => {
       // 1. Check walletClient
       if (!walletClient) {
-        console.error('❌ walletClient not ready');
-        throw new Error('钱包客户端未就绪，请先连接钱包');
+        console.error('[useX402Payment] Wallet client not ready');
+        throw new Error('Wallet client not ready. Please connect wallet first.');
       }
 
       // 2. Validate parameters
       if (!targetUrl || targetUrl === '') {
-        throw new Error('支付资源 URL 无效');
+        console.error('[useX402Payment] Invalid payment resource URL.');
+        throw new Error('Invalid payment resource URL.');
       }
-
-      console.log('📋 Starting X402 payment flow...');
-      console.log('targetUrl:', targetUrl);
-
-      const time = Date.now();
-      console.log('time:', time);
 
       // 3. Use x402-fetch package to handle payment
       const fetchWithProxyHeader = createFetchWithProxyHeader();
       const signer = walletClient.extend(publicActions) as unknown as Signer;
       const fetchWithPayment = wrapFetchWithPayment(fetchWithProxyHeader, signer, value);
-
-      const endTime = Date.now();
-      console.log('endTime:', endTime);
-      console.log('duration:', endTime - time);
 
       // 4. Call payment API
       let requestInit = init;
@@ -99,25 +74,17 @@ export function useX402Payment(options: UseX402PaymentOptions) {
       // 5. Parse response
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`支付请求失败: ${response.status} ${errorText}`);
+        throw new Error(`Payment request failed: ${response.status} ${errorText}`);
       }
 
-      const apiResponse: ApiResponse<X402PaymentResponse> = await response.json();
-
-      // 6. Check business status code
-      if (apiResponse.code !== 0) {
-        throw new Error(apiResponse.message || '支付失败');
+      // 6. Hand over response processing to the user if provided
+      if (onSuccess) {
+        return await onSuccess(response);
       }
 
-      // 7. Check if payment succeeded
-      if (!apiResponse.data.success) {
-        throw new Error('支付失败');
-      }
-
-      // 8. Return payment data
-      return apiResponse.data;
+      // Default JSON parsing if no custom handler
+      return await response.json();
     },
     ...mutationOptions,
   });
 }
-
