@@ -1,13 +1,15 @@
 packages:
+  # v2 (x402 v2 + x402x-evm) examples live at the top-level folders
   - facilitator
   - servers/*
   - clients/*
-  - fullstack/*
-  - dynamic_agent
-  - agent
-  - mcp-embedded-wallet
-  - mpc
-  - discovery
+
+  # v1 (legacy) examples were migrated under ./v1
+  - v1/facilitator
+  - v1/clients/*
+
+  # b402 typescript packages (v1/* + x402x-evm)
   - ../../typescript/packages/*
+  - ../../typescript/packages/v1/*
 onlyBuiltDependencies:
   - better-sqlite3

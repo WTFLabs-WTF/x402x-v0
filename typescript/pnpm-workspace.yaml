@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - packages/v1/*
   - examples/facilitator
   - examples/**/*
 ignoredBuiltDependencies:

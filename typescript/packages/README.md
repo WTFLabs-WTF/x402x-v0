@@ -1,6 +1,11 @@
-# X402 TypeScript 包
+# X402 TypeScript 包（b402）
 
-这个目录包含了 X402 支付协议的 TypeScript 实现包。
+这个目录包含了 b402 仓库里的 TypeScript 包。
+
+## 目录结构规则
+
+- `./x402x-evm/`：**新版适配包**（基于 `@x402/core` 的 EVM mechanism 实现）
+- `./v1/*`：**旧版（v1 fork）**相关包（保持原有对外包名与用法不变）
 
 ## 包列表
 
