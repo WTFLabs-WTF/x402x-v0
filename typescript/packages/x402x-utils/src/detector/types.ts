@@ -1,29 +1,29 @@
 /**
- * 支持的支付方式
+ * Supported payment methods
  */
 export type PaymentMethod = 'eip3009' | 'permit' | 'permit2' | 'permit2-witness'
 
 /**
- * Token 支付能力检测结果
+ * Token payment capabilities detection result
  */
 export interface TokenPaymentCapabilities {
-  /** Token 地址 */
+  /** Token address */
   address: string
-  /** 支持的支付方式列表 */
+  /** Supported payment methods list */
   supportedMethods: PaymentMethod[]
-  /** 详细检测结果 */
+  /** Detailed detection result */
   details: {
-    /** 是否支持 EIP-3009 (transferWithAuthorization) */
+    /** Whether EIP-3009 (transferWithAuthorization) is supported */
     hasEIP3009: boolean
-    /** 是否支持 EIP-2612 (permit) */
+    /** Whether EIP-2612 (permit) is supported */
     hasPermit: boolean
-    /** 是否支持 Permit2 (通用授权) */
+    /** Whether Permit2 (universal authorization) is supported */
     hasPermit2Approval: boolean
   }
 }
 
 /**
- * Logger 接口
+ * Logger interface
  */
 export interface Logger {
   log: (message: string) => void
@@ -31,9 +31,9 @@ export interface Logger {
 }
 
 /**
- * TokenDetector 配置选项
+ * TokenDetector configuration options
  */
 export interface TokenDetectorOptions {
-  /** 自定义 logger，默认使用 console */
-  logger?: Logger | null // null 表示禁用日志
+  /** Custom logger, default is console */
+  logger?: Logger | null // null means disable logging
 }
