@@ -36,6 +36,7 @@
     "vitest": "^3.0.5"
   },
   "dependencies": {
+    "@x402/core": "^2.0.0",
     "viem": "^2.21.26"
   },
   "exports": {
@@ -47,6 +48,16 @@
       "require": {
         "types": "./dist/cjs/index.d.ts",
         "default": "./dist/cjs/index.js"
+      }
+    },
+    "./server": {
+      "import": {
+        "types": "./dist/esm/server/index.d.mts",
+        "default": "./dist/esm/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/server/index.d.ts",
+        "default": "./dist/cjs/server/index.js"
       }
     }
   },
