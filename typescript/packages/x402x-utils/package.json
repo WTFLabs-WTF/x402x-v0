@@ -1,6 +1,6 @@
 {
   "name": "x402x-utils",
-  "version": "0.0.1-beta.0",
+  "version": "0.0.2-beta.101",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -14,7 +14,15 @@
     "lint": "eslint . --ext .ts --fix",
     "lint:check": "eslint . --ext .ts"
   },
-  "keywords": ["x402", "x402x", "utils", "detect", "permit", "eip3009", "permit2"],
+  "keywords": [
+    "x402",
+    "x402x",
+    "utils",
+    "detect",
+    "permit",
+    "eip3009",
+    "permit2"
+  ],
   "license": "Apache-2.0",
   "author": "b402",
   "description": "Shared utilities for x402x packages (including token payment method detection).",
@@ -61,7 +69,7 @@
       }
     }
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ]
 }
-
-
