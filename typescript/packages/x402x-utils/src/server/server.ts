@@ -11,7 +11,6 @@ import {
   SchemeNetworkServer,
   SettleResponse,
   PaymentRequired,
-  Price,
 } from '@x402/core/types'
 
 /**
@@ -45,9 +44,13 @@ export interface ProcessOptions {
    */
   network: Network
   /**
-   * Price string (e.g., "$0.001") or number
+   * Price value (string or number). Treated as uiAmount.
    */
   price: string | number
+  /**
+   * List of token addresses to filter the built requirements.
+   */
+  assets?: string[]
   /**
    * Optional override for recipient address
    */
@@ -133,7 +136,8 @@ export class X402Server {
    * @param options - Requirement options
    * @param options.scheme - Logical payment scheme
    * @param options.network - CAIP-2 network identifier
-   * @param options.price - Price string or number
+   * @param options.price - Price value (uiAmount)
+   * @param options.assets - Optional token address filters
    * @param options.payTo - Recipient address
    * @returns Array of payment requirements
    */
@@ -141,6 +145,7 @@ export class X402Server {
     scheme: string
     network: Network
     price: string | number
+    assets?: string[]
     payTo?: string
   }): Promise<PaymentRequirements[]> {
     const payTo = options.payTo || this.defaultPayTo
@@ -148,100 +153,86 @@ export class X402Server {
       throw new Error('payTo is required (either in constructor or in options)')
     }
 
-    return this.resourceServer.buildPaymentRequirements({
+    // 1. Build requirements first (precision handled by parsePrice in resourceServer)
+    const requirements = await this.resourceServer.buildPaymentRequirements({
       scheme: options.scheme,
       network: options.network,
       payTo,
-      price: options.price as Price,
+      price: options.price,
     })
+
+    // 2. Filter by assets if provided
+    if (options.assets && options.assets.length > 0) {
+      return requirements.filter((req) => options.assets!.includes(req.asset))
+    }
+
+    return requirements
   }
 
   /**
    * Processes a payment request (Verify and Settle).
    *
    * @param paymentHeader - The PAYMENT-SIGNATURE header value (Base64)
-   * @param options - Process options including requirements metadata
+   * @param options - Process options including requirements metadata or pre-built requirements
    * @returns Process result with status and response data
    */
   async process(
     paymentHeader: string | undefined,
-    options: ProcessOptions,
+    options: ProcessOptions | { requirements: PaymentRequirements[]; resourceInfo: ResourceInfo },
   ): Promise<ProcessResult> {
-    const { scheme, network, price, resourceInfo } = options
-    const payTo = options.payTo || this.defaultPayTo
-
-    if (!payTo) {
-      return {
-        success: false,
-        status: 500,
-        error: 'internal_error',
-        reason: 'payTo is required',
-        response: { error: 'internal_error', reason: 'payTo is required' },
-      }
-    }
+    let requirements: PaymentRequirements[]
+    let resourceInfo: ResourceInfo
 
     try {
-      // 1. Build Requirements
-      const requirements = await this.resourceServer.buildPaymentRequirements({
-        scheme,
-        network,
-        payTo,
-        price: price as Price,
-      })
+      if ('requirements' in options) {
+        requirements = options.requirements
+        resourceInfo = options.resourceInfo
+      } else {
+        const { scheme, network, price, assets } = options
+        resourceInfo = options.resourceInfo
+        const payTo = options.payTo || this.defaultPayTo
 
-      // 2. Check if payment header is present
-      if (!paymentHeader) {
+        if (!payTo) {
+          return {
+            success: false,
+            status: 500,
+            error: 'internal_error',
+            reason: 'payTo is required',
+            response: { error: 'internal_error', reason: 'payTo is required' },
+          }
+        }
+
+        // 1. Build Requirements
+        requirements = await this.buildRequirements({
+          scheme,
+          network,
+          price,
+          assets,
+          payTo,
+        })
+      }
+
+      // 2. Parse
+      const parsed = this.parse(paymentHeader, requirements)
+      if (!parsed.success) {
         const paymentRequired = this.resourceServer.createPaymentRequiredResponse(
           requirements,
           resourceInfo,
-          'payment_required',
+          parsed.error!,
         )
         return {
           success: false,
           status: 402,
-          error: 'payment_required',
+          error: parsed.error,
           paymentRequiredHeader: encodePaymentRequiredHeader(paymentRequired),
           response: paymentRequired,
         }
       }
 
-      // 3. Decode and Match
-      let paymentPayload: PaymentPayload
-      try {
-        paymentPayload = decodePaymentSignatureHeader(paymentHeader)
-      } catch {
-        const paymentRequired = this.resourceServer.createPaymentRequiredResponse(
-          requirements,
-          resourceInfo,
-          'invalid_payment_signature',
-        )
-        return {
-          success: false,
-          status: 402,
-          error: 'invalid_payment_signature',
-          paymentRequiredHeader: encodePaymentRequiredHeader(paymentRequired),
-          response: paymentRequired,
-        }
-      }
+      const { payload, matching } = parsed.data!
 
-      const matching = this.resourceServer.findMatchingRequirements(requirements, paymentPayload)
-      if (!matching) {
-        const paymentRequired = this.resourceServer.createPaymentRequiredResponse(
-          requirements,
-          resourceInfo,
-          'no_matching_requirements',
-        )
-        return {
-          success: false,
-          status: 402,
-          error: 'no_matching_requirements',
-          paymentRequiredHeader: encodePaymentRequiredHeader(paymentRequired),
-          response: paymentRequired,
-        }
-      }
-
-      // 4. Verify
-      const verify = await this.resourceServer.verifyPayment(paymentPayload, matching)
+      // 3. Verify
+      const verify = await this.verify(payload, matching)
       if (!verify.isValid) {
         const paymentRequired = this.resourceServer.createPaymentRequiredResponse(
           requirements,
@@ -257,19 +248,19 @@ export class X402Server {
         }
       }
 
-      // 5. Settle
-      const settle = await this.resourceServer.settlePayment(paymentPayload, matching)
+      // 4. Settle
+      const settle = await this.settle(payload, matching)
       if (!settle.success) {
         return {
           success: false,
-          status: 402, // Often still 402 if settlement fails due to client error
+          status: 402,
           error: 'settlement_failed',
           reason: settle.errorReason,
           response: { error: 'settlement_failed', reason: settle.errorReason },
         }
       }
 
-      // 6. Success
+      // 5. Success
       const paymentResponseHeader = encodePaymentResponseHeader({
         ...settle,
         requirements: matching,
@@ -291,6 +282,64 @@ export class X402Server {
         response: { error: 'internal_server_error', reason: message },
       }
     }
+  }
+
+  /**
+   * Decodes the payment header and finds matching requirements.
+   *
+   * @param paymentHeader - The PAYMENT-SIGNATURE header (Base64)
+   * @param requirements - Available payment requirements
+   * @returns Parse result
+   */
+  parse(
+    paymentHeader: string | undefined,
+    requirements: PaymentRequirements[],
+  ): {
+    success: boolean
+    error?: 'payment_required' | 'no_matching_requirements' | 'invalid_payment_signature'
+    data?: { payload: PaymentPayload; matching: PaymentRequirements }
+  } {
+    if (!paymentHeader) {
+      return { success: false, error: 'payment_required' }
+    }
+
+    try {
+      const payload = decodePaymentSignatureHeader(paymentHeader)
+      const matching = this.resourceServer.findMatchingRequirements(requirements, payload)
+
+      if (!matching) {
+        return { success: false, error: 'no_matching_requirements' }
+      }
+
+      return {
+        success: true,
+        data: { payload, matching },
+      }
+    } catch {
+      return { success: false, error: 'invalid_payment_signature' }
+    }
+  }
+
+  /**
+   * Verifies the payment payload against a matching requirement.
+   *
+   * @param payload - The payment payload
+   * @param matching - The matching payment requirement
+   * @returns Verification result
+   */
+  async verify(payload: PaymentPayload, matching: PaymentRequirements) {
+    return await this.resourceServer.verifyPayment(payload, matching)
+  }
+
+  /**
+   * Settles the payment payload against a matching requirement.
+   *
+   * @param payload - The payment payload
+   * @param matching - The matching payment requirement
+   * @returns Settlement result
+   */
+  async settle(payload: PaymentPayload, matching: PaymentRequirements) {
+    return await this.resourceServer.settlePayment(payload, matching)
   }
 
   /**
