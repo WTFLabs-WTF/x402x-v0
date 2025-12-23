@@ -1,3 +1,13 @@
+/**
+ * X402Server - 三种使用模式示例
+ *
+ * Mode A (自动化): 一行代码搞定，最简单
+ * Mode B (预构建): 提前生成 Requirements，可缓存
+ * Mode C (原子化): 完全手动控制，适合复杂业务
+ *
+ * 本示例展示如何使用 X402Server 的不同模式来满足不同场景需求。
+ */
+
 import dotenv from 'dotenv'
 import express from 'express'
 import { X402Server } from 'x402x-utils/server'
@@ -27,6 +37,7 @@ const server = new X402Server({
   payTo: PAY_TO,
 })
 
+// 注册 scheme（资产自动同步）
 const evmScheme = new ExactX402xEvmServer().registerAsset(EVM_NETWORK, 'TOKEN', {
   address: ASSET_ADDRESS,
   decimals: ASSET_DECIMALS,
@@ -67,26 +78,26 @@ app.get('/mode-a', async (req, res) => {
  * 方式 B: 预构建模式 (Manual Requirements Mode)
  *
  * 这种方式允许你提前生成 Requirements。
- * 适用于需要“锁定价格”或“缓存支付要求”的场景。
+ * 适用于需要"锁定价格"或"缓存支付要求"的场景。
  */
 app.get('/mode-b', async (req, res) => {
   // 1. 提前构建要求 (可以从缓存获取)
-  // 你可以传入数值或字符串价格（uiAmount），底层会根据资产注册信息自动处理精度转换
   const requirements = await server.buildRequirements({
     scheme: 'exact:eip7702',
     network: EVM_NETWORK,
-    price: 0.01,
-    // 如果需要过滤特定资产，可以使用 assets 字段
-    assets: req.query.custom === 'true' ? [ASSET_ADDRESS] : undefined,
+    price: {
+      asset: ASSET_ADDRESS,
+      uiAmount: 0.01, // ✅ 使用 uiAmount，自动转换精度
+    },
   })
 
   // 2. 将预构建的要求传给 process
   const result = await server.process(req.header('PAYMENT-SIGNATURE'), {
     requirements,
-    resourceInfo: { 
-      url: 'http://example.com/item-b', 
+    resourceInfo: {
+      url: 'http://example.com/item-b',
       description: 'Mode B',
-      mimeType: 'application/json'
+      mimeType: 'application/json',
     },
   })
 
@@ -106,39 +117,45 @@ app.get('/mode-c', async (req, res) => {
   const requirements = await server.buildRequirements({
     scheme: 'exact:eip7702',
     network: EVM_NETWORK,
-    price: 0.01,
+    price: {
+      asset: ASSET_ADDRESS,
+      uiAmount: 0.01,
+    },
   })
 
   const signature = req.header('PAYMENT-SIGNATURE')
 
-  // 1. 解析
-  const parsed = (server as any).parse(signature, requirements)
+  // 1. 解析（使用公开方法）
+  const parsed = server.parse(signature, requirements)
   if (!parsed.success) {
     // 构造 402 响应
     const resourceServer = server.getResourceServer()
     const paymentRequired = resourceServer.createPaymentRequiredResponse(
       requirements,
-      { 
+      {
         url: 'http://example.com/item-c',
         description: 'Mode C',
-        mimeType: 'application/json'
+        mimeType: 'application/json',
       },
-      parsed.error as any,
+      parsed.error,
     )
-    res.setHeader('PAYMENT-REQUIRED', Buffer.from(JSON.stringify(paymentRequired)).toString('base64'))
+    res.setHeader(
+      'PAYMENT-REQUIRED',
+      Buffer.from(JSON.stringify(paymentRequired)).toString('base64'),
+    )
     return res.status(402).json(paymentRequired)
   }
 
   const { payload, matching } = parsed.data!
 
   // 2. 验证
-  const verify = await (server as any).verify(payload, matching)
+  const verify = await server.verify(payload, matching)
   if (!verify.isValid) {
     return res.status(402).json({ error: 'Verification failed' })
   }
 
   // 3. 结算 (可选：你可以在这里做一些业务判断再结算)
-  const settle = await (server as any).settle(payload, matching)
+  const settle = await server.settle(payload, matching)
   if (!settle.success) {
     return res.status(500).json({ error: 'Settlement failed' })
   }

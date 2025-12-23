@@ -1,5 +1,5 @@
 {
-  "name": "vrfnft-example",
+  "name": "chainlink-vrf-nft-example",
   "version": "0.1.0",
   "private": true,
   "description": "Example demonstrating x402 payment for NFT minting",

@@ -11,7 +11,10 @@ import {
   SchemeNetworkServer,
   SettleResponse,
   PaymentRequired,
+  Price,
 } from '@x402/core/types'
+import { AssetRegistry } from './assetRegistry'
+import { EnhancedAssetAmount, normalizePriceInput } from './priceUtils'
 
 /**
  * X402ServerConfig
@@ -29,10 +32,17 @@ export interface X402ServerConfig {
    * Default recipient address for payments
    */
   payTo?: string
+  /**
+   * Optional pre-configured asset registry for decimal conversions
+   */
+  assetRegistry?: AssetRegistry
 }
 
 /**
- * ProcessOptions
+ * ProcessOptions for X402Server
+ *
+ * **Note**: The `price` field supports enhanced types (uiAmount, arrays) that are
+ * NOT available in the official x402ResourceServer.
  */
 export interface ProcessOptions {
   /**
@@ -44,13 +54,26 @@ export interface ProcessOptions {
    */
   network: Network
   /**
-   * Price value (string or number). Treated as uiAmount.
+   * **Enhanced Price type** (X402Server exclusive).
+   *
+   * Supports:
+   * - Money (string | number): e.g., "$0.001" or 0.001
+   * - AssetAmount with amount: `{ asset, amount }`
+   * - **EnhancedAssetAmount with uiAmount**: `{ asset, uiAmount }` ← Auto-converts!
+   * - **Array**: `[{ asset, uiAmount }, ...]` ← Multiple tokens!
+   *
+   * @example
+   * // uiAmount (auto-converts using AssetRegistry)
+   * price: { asset: '0xUSDC', uiAmount: 10 }
+   *
+   * @example
+   * // Multiple tokens
+   * price: [
+   *   { asset: '0xUSDC', uiAmount: 10 },
+   *   { asset: '0xDAI', uiAmount: 10 },
+   * ]
    */
-  price: string | number
-  /**
-   * List of token addresses to filter the built requirements.
-   */
-  assets?: string[]
+  price: Price | EnhancedAssetAmount | EnhancedAssetAmount[]
   /**
    * Optional override for recipient address
    */
@@ -91,13 +114,41 @@ export interface ProcessResult {
 }
 
 /**
- * X402 Server (V2)
+ * X402 Server (V2) - Enhanced wrapper around x402ResourceServer
  *
- * A simplified wrapper around x402ResourceServer for easier usage in Node.js/TypeScript servers.
+ * **Key Enhancements over official x402ResourceServer:**
+ * - ✅ **uiAmount support**: Use user-friendly amounts (e.g., 10) instead of raw amounts (e.g., "10000000")
+ * - ✅ **AssetRegistry**: Built-in asset management with automatic decimal conversion
+ * - ✅ **Array support**: Multiple token options in a single call
+ * - ✅ **Auto-sync**: Scheme assets automatically sync to AssetRegistry
+ * - ✅ **Simplified API**: Easier to use with sensible defaults
+ *
+ * @example
+ * ```typescript
+ * import { X402Server } from 'x402x-utils/server'
+ *
+ * const server = new X402Server({
+ *   facilitatorUrl: 'https://facilitator.example.com',
+ *   payTo: '0xYourAddress'
+ * })
+ *
+ * // Register asset with decimals
+ * server.registerAsset('eip155:8453', '0xUSDC', { decimals: 6 })
+ *
+ * // Use uiAmount (auto-converts to amount)
+ * const requirements = await server.buildRequirements({
+ *   scheme: 'exact',
+ *   network: 'eip155:8453',
+ *   price: { asset: '0xUSDC', uiAmount: 10 }  // ← Auto-converts to "10000000"
+ * })
+ * ```
+ *
+ * @see For comparison with x402ResourceServer, see COMPARISON.md
  */
 export class X402Server {
   private resourceServer: x402ResourceServer
   private defaultPayTo?: string
+  private assetRegistry: AssetRegistry
 
   /**
    * Creates a new X402Server instance.
@@ -109,17 +160,34 @@ export class X402Server {
       config.facilitatorClient || new HTTPFacilitatorClient({ url: config.facilitatorUrl })
     this.resourceServer = new x402ResourceServer(facilitatorClient)
     this.defaultPayTo = config.payTo
+    this.assetRegistry = config.assetRegistry || new AssetRegistry()
   }
 
   /**
    * Registers a scheme/network server implementation.
+   * Automatically syncs asset information from the scheme to the asset registry.
    *
    * @param network - The network identifier
    * @param scheme - The scheme implementation
    * @returns this for chaining
+   *
+   * @example
+   * // x402x-evm scheme with built-in asset registration
+   * const evmScheme = new ExactX402xEvmServer()
+   *   .registerAsset('eip155:56', 'USD1', {
+   *     address: '0x...',
+   *     decimals: 18,
+   *     permitType: 'permit'
+   *   })
+   *
+   * server.register('eip155:56', evmScheme) // Assets auto-synced!
    */
   register(network: Network, scheme: SchemeNetworkServer): this {
     this.resourceServer.register(network, scheme)
+
+    // Auto-sync assets from x402x-evm schemes
+    this.syncAssetsFromScheme(network, scheme)
+
     return this
   }
 
@@ -131,21 +199,134 @@ export class X402Server {
   }
 
   /**
+   * Get the asset registry for registering token decimals.
+   *
+   * @returns The asset registry instance
+   *
+   * @example
+   * server.getAssetRegistry()
+   *   .registerAsset('eip155:8453', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', {
+   *     decimals: 6,
+   *     symbol: 'USDC',
+   *     name: 'USD Coin'
+   *   })
+   */
+  getAssetRegistry(): AssetRegistry {
+    return this.assetRegistry
+  }
+
+  /**
+   * Convenient method to register an asset for a network.
+   * This is a shortcut for `server.getAssetRegistry().registerAsset()`.
+   *
+   * @param network - CAIP-2 network identifier
+   * @param asset - Token contract address
+   * @param info - Asset metadata
+   * @param info.decimals - Number of decimals
+   * @param info.symbol - Optional symbol
+   * @param info.name - Optional name
+   * @returns this for chaining
+   *
+   * @example
+   * server
+   *   .registerAsset('eip155:8453', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', {
+   *     decimals: 6,
+   *     symbol: 'USDC',
+   *     name: 'USD Coin'
+   *   })
+   *   .registerAsset('eip155:8453', '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', {
+   *     decimals: 18,
+   *     symbol: 'DAI'
+   *   })
+   */
+  registerAsset(
+    network: Network,
+    asset: string,
+    info: { decimals: number; symbol?: string; name?: string },
+  ): this {
+    this.assetRegistry.registerAsset(network, asset, info)
+    return this
+  }
+
+  /**
+   * Register multiple assets at once.
+   * This is a shortcut for `server.getAssetRegistry().registerAssets()`.
+   *
+   * @param network - CAIP-2 network identifier
+   * @param assets - Map of asset address to asset info
+   * @returns this for chaining
+   *
+   * @example
+   * server.registerAssets('eip155:8453', {
+   *   '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': {
+   *     decimals: 6,
+   *     symbol: 'USDC',
+   *     name: 'USD Coin'
+   *   },
+   *   '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb': {
+   *     decimals: 18,
+   *     symbol: 'DAI',
+   *     name: 'Dai Stablecoin'
+   *   }
+   * })
+   */
+  registerAssets(
+    network: Network,
+    assets: Record<string, { decimals: number; symbol?: string; name?: string }>,
+  ): this {
+    this.assetRegistry.registerAssets(network, assets)
+    return this
+  }
+
+  /**
    * Builds payment requirements for a resource.
+   * Supports multiple price formats:
+   * - Money (string | number): "$0.001" or 0.001
+   * - AssetAmount with amount: { asset: "0x...", amount: "1000000" }
+   * - AssetAmount with uiAmount: { asset: "0x...", uiAmount: 1.5 }
+   * - Array of AssetAmount: Multiple token options
    *
    * @param options - Requirement options
    * @param options.scheme - Logical payment scheme
    * @param options.network - CAIP-2 network identifier
-   * @param options.price - Price value (uiAmount)
-   * @param options.assets - Optional token address filters
+   * @param options.price - Price value (supports Money, AssetAmount, or array)
    * @param options.payTo - Recipient address
    * @returns Array of payment requirements
+   *
+   * @example
+   * // Money format
+   * await server.buildRequirements({
+   *   scheme: 'exact',
+   *   network: 'eip155:8453',
+   *   price: '$0.001',
+   *   payTo: '0x...'
+   * })
+   *
+   * @example
+   * // uiAmount format (auto-converts using registered decimals)
+   * await server.buildRequirements({
+   *   scheme: 'exact',
+   *   network: 'eip155:8453',
+   *   price: { asset: '0xUSDC', uiAmount: 1.5 },
+   *   payTo: '0x...'
+   * })
+   *
+   * @example
+   * // Multiple token options
+   * await server.buildRequirements({
+   *   scheme: 'exact',
+   *   network: 'eip155:8453',
+   *   price: [
+   *     { asset: '0xUSDC', uiAmount: 10 },
+   *     { asset: '0xDAI', uiAmount: 10 },
+   *   ],
+   *   payTo: '0x...'
+   * })
    */
   async buildRequirements(options: {
     scheme: string
     network: Network
-    price: string | number
-    assets?: string[]
+    price: Price | EnhancedAssetAmount | EnhancedAssetAmount[]
     payTo?: string
   }): Promise<PaymentRequirements[]> {
     const payTo = options.payTo || this.defaultPayTo
@@ -153,20 +334,42 @@ export class X402Server {
       throw new Error('payTo is required (either in constructor or in options)')
     }
 
-    // 1. Build requirements first (precision handled by parsePrice in resourceServer)
-    const requirements = await this.resourceServer.buildPaymentRequirements({
+    // Handle array of prices (multiple token options)
+    if (Array.isArray(options.price)) {
+      const allRequirements: PaymentRequirements[] = []
+
+      for (const singlePrice of options.price) {
+        // Normalize each price (handle uiAmount conversion)
+        const normalizedPrice = normalizePriceInput(
+          singlePrice,
+          options.network,
+          this.assetRegistry,
+        )
+
+        const requirements = await this.resourceServer.buildPaymentRequirements({
+          scheme: options.scheme,
+          network: options.network,
+          payTo,
+          price: normalizedPrice,
+        })
+
+        allRequirements.push(...requirements)
+      }
+
+      return allRequirements
+    }
+
+    // Single price - normalize and build
+    const normalizedPrice = normalizePriceInput(options.price, options.network, this.assetRegistry)
+
+    // normalizePriceInput 确保返回的 AssetAmount 包含 amount 字段
+    // 或者返回 Money (string | number)
+    return await this.resourceServer.buildPaymentRequirements({
       scheme: options.scheme,
       network: options.network,
       payTo,
-      price: options.price,
+      price: normalizedPrice,
     })
-
-    // 2. Filter by assets if provided
-    if (options.assets && options.assets.length > 0) {
-      return requirements.filter((req) => options.assets!.includes(req.asset))
-    }
-
-    return requirements
   }
 
   /**
@@ -188,7 +391,7 @@ export class X402Server {
         requirements = options.requirements
         resourceInfo = options.resourceInfo
       } else {
-        const { scheme, network, price, assets } = options
+        const { scheme, network, price } = options
         resourceInfo = options.resourceInfo
         const payTo = options.payTo || this.defaultPayTo
 
@@ -207,7 +410,6 @@ export class X402Server {
           scheme,
           network,
           price,
-          assets,
           payTo,
         })
       }
@@ -349,5 +551,49 @@ export class X402Server {
    */
   getResourceServer(): x402ResourceServer {
     return this.resourceServer
+  }
+
+  /**
+   * Inject AssetRegistry into scheme and sync existing assets.
+   * Supports ExactX402xEvmServer and other schemes with asset metadata.
+   *
+   * @param network - The network identifier
+   * @param scheme - The scheme implementation
+   */
+  private syncAssetsFromScheme(network: Network, scheme: SchemeNetworkServer): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const schemeAny = scheme as any
+
+    // Inject AssetRegistry into scheme if it supports it
+    if (typeof schemeAny.setAssetRegistry === 'function') {
+      schemeAny.setAssetRegistry(this.assetRegistry)
+    }
+
+    // Sync existing assets from scheme to registry
+    // ExactX402xEvmServer has assetsByAddress map
+    if (schemeAny.assetsByAddress && schemeAny.assetsByAddress instanceof Map) {
+      const prefix = `${network}:`
+
+      for (const [key, assetConfig] of schemeAny.assetsByAddress.entries()) {
+        // key format: "eip155:56:0xaddress"
+        if (key.startsWith(prefix)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const asset = assetConfig as any
+
+          // Register to our AssetRegistry with full information
+          if (asset.address && asset.decimals !== undefined) {
+            this.assetRegistry.registerAsset(network, asset.address, {
+              decimals: asset.decimals,
+              symbol: asset.symbol,
+              name: asset.name,
+              extra: {
+                permitType: asset.permitType,
+                version: asset.version,
+              },
+            })
+          }
+        }
+      }
+    }
   }
 }

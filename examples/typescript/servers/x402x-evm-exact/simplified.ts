@@ -1,3 +1,16 @@
+/**
+ * Simplified x402x-utils Server Example
+ *
+ * 展示 X402Server 的基础用法，包括：
+ * 1. 使用 Money 格式（最简单）
+ * 2. 使用 uiAmount（推荐，精确控制）
+ *
+ * 核心优势：
+ * - ✅ 自动资产注册同步（ExactX402xEvmServer → AssetRegistry）
+ * - ✅ uiAmount 自动精度转换
+ * - ✅ 一行代码处理支付逻辑
+ */
+
 import dotenv from 'dotenv'
 import express from 'express'
 import { X402Server } from 'x402x-utils/server'
@@ -28,35 +41,35 @@ const server = new X402Server({
 })
 
 // 2. 配置并注册 EVM Scheme
+// 注意：资产信息会自动同步到 AssetRegistry，支持 uiAmount 转换
 const evmScheme = new ExactX402xEvmServer().registerAsset(EVM_NETWORK, 'TOKEN', {
   address: ASSET_ADDRESS,
   decimals: ASSET_DECIMALS,
   name: ASSET_NAME || undefined,
   version: ASSET_VERSION || undefined,
-  permitType: 'permit',
+  permitType: 'permit', // x402x-evm 特有
 })
 
-server.register(EVM_NETWORK, evmScheme)
+server.register(EVM_NETWORK, evmScheme) // ← 资产自动同步到 AssetRegistry
 
 const app = express()
 
-app.get('/paid', async (req, res) => {
+// 示例 1: 使用 Money 格式（最简单）
+app.get('/paid-money', async (req, res) => {
   const host = req.header('host') || `localhost:${PORT}`
   const url = `${req.protocol || 'http'}://${host}${req.originalUrl || req.url || req.path}`
 
-  // 3. 使用一行代码处理支付逻辑（包含构建 requirements、解析 header、验证、结算）
   const result = await server.process(req.header('PAYMENT-SIGNATURE'), {
     scheme: 'exact:eip7702',
     network: EVM_NETWORK,
-    price: '$0.001',
+    price: '$0.001', // Money 格式：字符串或数字
     resourceInfo: {
       url,
-      description: 'Simplified paid endpoint (x402x-utils)',
+      description: 'Paid endpoint (Money format)',
       mimeType: 'application/json',
     },
   })
 
-  // 4. 根据处理结果设置响应头
   if (result.paymentRequiredHeader) {
     res.setHeader('PAYMENT-REQUIRED', result.paymentRequiredHeader)
   }
@@ -64,7 +77,35 @@ app.get('/paid', async (req, res) => {
     res.setHeader('PAYMENT-RESPONSE', result.paymentResponseHeader)
   }
 
-  // 5. 返回响应（成功为 200，需支付为 402，错误为 500）
+  res.status(result.status).json(result.response)
+})
+
+// 示例 2: 使用 uiAmount（推荐，精确控制）
+app.get('/paid-uiamount', async (req, res) => {
+  const host = req.header('host') || `localhost:${PORT}`
+  const url = `${req.protocol || 'http'}://${host}${req.originalUrl || req.url || req.path}`
+
+  const result = await server.process(req.header('PAYMENT-SIGNATURE'), {
+    scheme: 'exact:eip7702',
+    network: EVM_NETWORK,
+    price: {
+      asset: ASSET_ADDRESS,
+      uiAmount: 0.001, // ✅ 使用 uiAmount，自动转换精度
+    },
+    resourceInfo: {
+      url,
+      description: 'Paid endpoint (uiAmount format)',
+      mimeType: 'application/json',
+    },
+  })
+
+  if (result.paymentRequiredHeader) {
+    res.setHeader('PAYMENT-REQUIRED', result.paymentRequiredHeader)
+  }
+  if (result.paymentResponseHeader) {
+    res.setHeader('PAYMENT-RESPONSE', result.paymentResponseHeader)
+  }
+
   res.status(result.status).json(result.response)
 })
 

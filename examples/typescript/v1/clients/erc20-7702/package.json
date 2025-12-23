@@ -1,5 +1,5 @@
 {
-  "name": "erc20-x402-example",
+  "name": "erc20-7702-example",
   "version": "0.1.0",
   "private": true,
   "description": "Example demonstrating x402 payment with new packages (@wtflabs/x402-schema, @wtflabs/x402-facilitator, @wtflabs/x402-server)",

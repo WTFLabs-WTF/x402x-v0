@@ -252,34 +252,6 @@ importers:
         specifier: ^3.0.5
         version: 3.2.4(@types/debug@4.1.12)(@types/node@22.19.1)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(tsx@4.20.6)
 
-  ../../typescript/packages/v1/x402x-react:
-    dependencies:
-      viem:
-        specifier: ^2.21.26
-        version: 2.42.1(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.1.12)
-      x402x-fetch:
-        specifier: workspace:^
-        version: link:../x402x-fetch
-    devDependencies:
-      '@tanstack/react-query':
-        specifier: ^5.0.0
-        version: 5.90.7(react@18.3.1)
-      '@types/react':
-        specifier: ^18.2.0
-        version: 18.3.27
-      eslint:
-        specifier: ^9.24.0
-        version: 9.39.1
-      react:
-        specifier: ^18.2.0
-        version: 18.3.1
-      tsup:
-        specifier: ^8.4.0
-        version: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
   ../../typescript/packages/v1/x402x-server:
     dependencies:
       express:
@@ -407,6 +379,40 @@ importers:
       vitest:
         specifier: ^3.0.5
         version: 3.2.4(@types/debug@4.1.12)(@types/node@22.19.1)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(tsx@4.20.6)
+
+  ../../typescript/packages/x402x-react:
+    dependencies:
+      '@x402/core':
+        specifier: ^2.0.0
+        version: 2.0.0
+      viem:
+        specifier: ^2.21.26
+        version: 2.42.1(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.1.12)
+      x402x-evm:
+        specifier: workspace:^
+        version: link:../x402x-evm
+      x402x-fetch:
+        specifier: workspace:^
+        version: link:../v1/x402x-fetch
+    devDependencies:
+      '@tanstack/react-query':
+        specifier: ^5.0.0
+        version: 5.90.7(react@18.3.1)
+      '@types/react':
+        specifier: ^18.2.0
+        version: 18.3.27
+      eslint:
+        specifier: ^9.24.0
+        version: 9.39.1
+      react:
+        specifier: ^18.2.0
+        version: 18.3.1
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
 
   ../../typescript/packages/x402x-utils:
     dependencies:

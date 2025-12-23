@@ -1,6 +1,6 @@
 {
   "name": "x402x-react",
-  "version": "0.0.2-beta.101",
+  "version": "0.0.2-beta.104",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
@@ -30,6 +30,7 @@
     "x402x-fetch": "workspace:^",
     "x402x-evm": "workspace:^",
     "@x402/core": "^2.0.0",
+    "@x402/fetch": "^2.0.0",
     "viem": "^2.21.26"
   },
   "exports": {

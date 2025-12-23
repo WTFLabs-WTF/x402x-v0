@@ -1,159 +1,163 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useMutation, useQuery, type UseMutationOptions, type UseQueryOptions } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useMutation, type UseMutationOptions } from '@tanstack/react-query';
 import { publicActions, type WalletClient } from 'viem';
-import { x402Client, x402HTTPClient } from '@x402/core/client';
+import { x402Client, wrapFetchWithPayment, x402HTTPClient } from '@x402/fetch';
 import type { PaymentRequired, PaymentRequirements } from '@x402/core/types';
-import { registerExactX402xEvmScheme, toX402xClientEvmSigner } from 'x402x-evm';
-
-// Export V1 Hooks
-export * from './v1';
-
-// --- V2 Hooks (Latest) ---
+import { toX402xClientEvmSigner } from 'x402x-evm';
+import { registerExactX402xEvmScheme } from "x402x-evm/exact/client";
 
 export interface UseX402PaymentOptions<TData = unknown> {
   url: string;               // Target resource URL
   walletClient?: WalletClient; // Wallet client from wagmi/viem
   init?: RequestInit;        // Initial probe and subsequent fetch options
   onSuccess?: (response: Response) => Promise<TData>;
-  mutationOptions?: Omit<UseMutationOptions<TData, Error, void>, 'mutationFn'>;
-  queryOptions?: Omit<UseQueryOptions<PaymentRequired | null, Error>, 'queryKey' | 'queryFn'>;
+  mutationOptions?: Omit<UseMutationOptions<TData, Error, { action: 'load' | 'pay'; override?: RequestInit }>, 'mutationFn'>;
+  enabled?: boolean;         // Whether to automatically probe on mount or URL change (default: true)
+  defaultPermitType?: 'eip3009' | 'permit'; // Default permit type for registration
 }
 
 /**
- * X402 Payment Hook (Latest Version)
+ * X402 Payment Hook (Refactored Version)
  * 
- * Provides a comprehensive hook for handling the X402 payment protocol:
- * - Automatically probes the server for payment requirements (accepts) using TanStack Query
- * - Manages selected payment option (accepted)
- * - Handles the mutation for signing and submitting payment
+ * Provides a unified mutation for handling the X402 payment protocol:
+ * - load: Probes the server for payment requirements (402 detection)
+ * - pay: Handles the full fetch cycle including signing and settlement
  * 
  * @param options Configuration options for the payment
  * @returns State and actions for the payment flow
  */
 export function useX402Payment<TData = unknown>(options: UseX402PaymentOptions<TData>) {
-  const { url, walletClient, init, onSuccess, mutationOptions, queryOptions } = options;
+  const { url, walletClient, init: baseInit, onSuccess, mutationOptions, enabled = true, defaultPermitType = 'eip3009' } = options;
 
-  // 1. Local state for the selected payment option
+  const [paymentRequired, setPaymentRequired] = useState<PaymentRequired | null>(null);
   const [accepted, setAccepted] = useState<PaymentRequirements | null>(null);
 
-  // 2. Fetch requirements using useQuery
-  const { 
-    data: paymentRequired, 
-    isLoading: isLoadingRequirements, 
-    error: queryError,
-    refetch: refreshRequirements 
-  } = useQuery({
-    queryKey: ['x402-requirements', url, init],
-    queryFn: async () => {
-      if (!url) return null;
-      
-      const response = await fetch(url, init);
-      
-      if (response.status === 402) {
-        const httpClient = new x402HTTPClient(new x402Client());
-        return httpClient.getPaymentRequiredResponse((name) => response.headers.get(name));
-      } else if (response.ok) {
-        // Resource already accessible, no payment required
-        return null;
+  // Unified Mutation for both load and pay
+  const mutation = useMutation<TData, Error, { action: 'load' | 'pay'; override?: RequestInit }>({
+    mutationFn: async ({ action, override }) => {
+      const mergedInit = { ...baseInit, ...override };
+
+      if (action === 'load') {
+        const response = await fetch(url, mergedInit);
+        
+        if (response.status === 402) {
+          // 调试：打印所有可访问的响应头
+          console.log('🔍 调试 - 响应状态:', response.status);
+          console.log('🔍 调试 - 所有可访问的响应头:');
+          response.headers.forEach((value, name) => {
+            console.log(`  ${name}: ${value}`);
+          });
+          
+          const httpClient = new x402HTTPClient(new x402Client());
+          const required = httpClient.getPaymentRequiredResponse((name) => {
+            const value = response.headers.get(name);
+            console.log(`🔍 尝试获取头 "${name}": ${value ? '✅ 成功' : '❌ 失败'}`);
+            return value;
+          });
+          
+          console.log('🔍 解析后的 required:', required);
+          
+          setPaymentRequired(required);
+          if (required.accepts?.length) {
+            // Default to the first accepted option
+            setAccepted(required.accepts[0]);
+          }
+          return required as any;
+        }
+        
+        // If not 402, it might be already paid or direct access
+        setPaymentRequired(null);
+        return null as any;
+      } else {
+        // Pay action: Trigger full payment flow using wrapFetchWithPayment
+        if (!walletClient) {
+          throw new Error("Wallet client is required for payment");
+        }
+
+        const client = new x402Client((_x402Version, accepts) => {
+          // If we have a manually selected option, use it.
+          if (accepted) {
+            const match = accepts.find((r) => {
+              const rExtra = r.extra as Record<string, unknown> | undefined;
+              const aExtra = accepted.extra as Record<string, unknown> | undefined;
+              return r.asset === accepted.asset && rExtra?.permitType === aExtra?.permitType;
+            });
+            if (match) return match;
+          }
+          return accepts[0];
+        });
+
+        // Register EVM scheme with the client
+        const signer = toX402xClientEvmSigner(walletClient.extend(publicActions) as any);
+        const publicClient = walletClient.extend(publicActions);
+
+        registerExactX402xEvmScheme(client, {
+          signer,
+          publicClient: publicClient as any,
+          defaultPermitType,
+        });
+
+        const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+        
+        // This will handle 402, sign, and re-fetch automatically
+        const response = await fetchWithPayment(url, mergedInit);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Payment failed: ${response.status} ${errorText}`);
+        }
+
+        // Handle success
+        if (onSuccess) {
+          return await onSuccess(response);
+        }
+
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          return await response.json();
+        }
+        return response as unknown as TData;
       }
-      
-      throw new Error(`Failed to probe resource: ${response.status} ${response.statusText}`);
-    },
-    enabled: !!url,
-    ...queryOptions
-  });
-
-  // Auto-select first requirement when requirements are first loaded
-  useEffect(() => {
-    if (paymentRequired?.accepts?.length && !accepted) {
-      setAccepted(paymentRequired.accepts[0]);
-    }
-  }, [paymentRequired, accepted]);
-
-  // Reset selection if URL changes
-  useEffect(() => {
-    setAccepted(null);
-  }, [url]);
-
-  /**
-   * Mutation to perform the actual payment
-   */
-  const paymentMutation = useMutation<TData, Error, void>({
-    mutationFn: async () => {
-      if (!walletClient) {
-        throw new Error("Wallet client not ready. Please connect wallet first.");
-      }
-      if (!paymentRequired || !accepted) {
-        throw new Error("Payment requirements not loaded or no payment option selected.");
-      }
-
-      // Initialize X402 client and register EVM scheme
-      const coreClient = new x402Client();
-      const signer = toX402xClientEvmSigner(walletClient.extend(publicActions) as any);
-      registerExactX402xEvmScheme(coreClient, { signer });
-
-      // Create payment payload based on selected requirement
-      // We force the core client to use our manually selected requirement
-      const paymentPayload = await coreClient.createPaymentPayload({
-        ...paymentRequired,
-        accepts: [accepted]
-      });
-
-      // Encode payload into headers
-      const httpClient = new x402HTTPClient(coreClient);
-      const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
-
-      // Submit payment request with the signature header
-      const response = await fetch(url, {
-        ...init,
-        headers: {
-          ...init?.headers,
-          ...paymentHeaders,
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Payment settlement failed: ${response.status} ${errorText}`);
-      }
-
-      // Handle success
-      if (onSuccess) {
-        return await onSuccess(response);
-      }
-
-      // Default behavior: try to parse as JSON, otherwise return response
-      const contentType = response.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        return await response.json();
-      }
-      return response as unknown as TData;
     },
     ...mutationOptions
   });
 
+  // Auto-load on mount or URL change
+  useEffect(() => {
+    if (enabled && url) {
+      setPaymentRequired(null);
+      setAccepted(null);
+      mutation.mutate({ action: 'load' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, url]);
+
   return {
-    // Selection state
+    // Actions
+    load: (override?: RequestInit) => mutation.mutate({ action: 'load', override }),
+    loadAsync: (override?: RequestInit) => mutation.mutateAsync({ action: 'load', override }),
+    pay: (override?: RequestInit) => mutation.mutate({ action: 'pay', override }),
+    payAsync: (override?: RequestInit) => mutation.mutateAsync({ action: 'pay', override }),
+    
+    // State
     accepts: paymentRequired?.accepts ?? [],
     accepted,
     setAccepted,
     paymentRequired,
-    
-    // Actions
-    refreshRequirements,
-    mutate: paymentMutation.mutate,
-    mutateAsync: paymentMutation.mutateAsync,
-    reset: paymentMutation.reset,
+    isReady: !!paymentRequired && !!accepted,
     
     // Status
-    isLoading: isLoadingRequirements || paymentMutation.isPending,
-    isPending: paymentMutation.isPending,
-    isSuccess: paymentMutation.isSuccess,
-    isError: !!queryError || paymentMutation.isError,
-    error: queryError || paymentMutation.error,
-    data: paymentMutation.data,
+    isLoading: mutation.isPending,
+    isPending: mutation.isPending,
+    isSuccess: mutation.isSuccess,
+    isError: mutation.isError,
+    error: mutation.error,
+    data: mutation.data,
+    
+    reset: () => {
+      mutation.reset();
+      setPaymentRequired(null);
+      setAccepted(null);
+    }
   };
 }
-
-// Alias for convenience
-export { useX402Payment as useX402 };
