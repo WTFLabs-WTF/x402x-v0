@@ -71,7 +71,7 @@ app.get("/paid", (req, res) => {
       scheme: "exact:eip7702",
       network,
       payTo: PAY_TO,
-      price: {amount: "1000000", asset: "0xU"},
+      price,
     });
     const accepts = Array.isArray(built) ? built : [built];
 

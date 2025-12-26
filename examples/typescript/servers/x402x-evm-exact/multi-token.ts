@@ -8,24 +8,29 @@
  * - ✅ 客户端可以选择任意一种代币支付
  * - ✅ 使用 uiAmount 自动处理精度转换
  * - ✅ 使用数组格式简化代码
+ * - ✅ 支持动态定价和分级定价
  */
 
 import dotenv from 'dotenv'
-import express from 'express'
+import express, { Request, Response } from 'express'
 import { X402Server } from 'x402x-utils/server'
 import { ExactX402xEvmServer } from 'x402x-evm/exact/server'
-import { Network } from '@x402/core/types'
 
 dotenv.config()
 
 const PORT = parseInt(process.env.PORT || '4022', 10)
 const FACILITATOR_URL = process.env.FACILITATOR_URL
-const EVM_NETWORK = (process.env.EVM_NETWORK || 'eip155:56') as Network
-const PAY_TO = process.env.PAY_TO
+const EVM_NETWORK = process.env.EVM_NETWORK || 'eip155:56'
+const PAY_TO = process.env.PAY_TO as `0x${string}` | undefined
 
-if (!FACILITATOR_URL || !PAY_TO) {
+if (!FACILITATOR_URL) {
   // eslint-disable-next-line no-console
-  console.error('❌ FACILITATOR_URL and PAY_TO are required')
+  console.error('❌ FACILITATOR_URL is required')
+  process.exit(1)
+}
+if (!PAY_TO) {
+  // eslint-disable-next-line no-console
+  console.error('❌ PAY_TO is required')
   process.exit(1)
 }
 
@@ -62,28 +67,30 @@ const evmScheme = new ExactX402xEvmServer()
     permitType: 'permit',
   })
 
-// 资产自动同步到 AssetRegistry
-server.register(EVM_NETWORK, evmScheme)
+server.register(EVM_NETWORK as `${string}:${string}`, evmScheme)
 
 const app = express()
 
-/**
- * 示例 1: 固定价格，多种代币选项
- *
- * 场景：一个商品价格固定为 10 USD，用户可以选择用 USDT、USDC 或 BUSD 支付
- */
-app.get('/product-fixed', async (req, res) => {
+// 辅助函数：处理支付响应
+const handlePayment = async (
+  req: Request,
+  res: Response,
+  options: {
+    price: string | number | { asset: `0x${string}`; uiAmount: number } | Array<{ asset: `0x${string}`; uiAmount: number }>
+    description: string
+    extraData?: Record<string, unknown>
+  },
+) => {
+  const host = req.header('host') || `localhost:${PORT}`
+  const url = `${req.protocol || 'http'}://${host}${req.originalUrl || req.url || req.path}`
+
   const result = await server.process(req.header('PAYMENT-SIGNATURE'), {
     scheme: 'exact:eip7702',
-    network: EVM_NETWORK,
-    price: [
-      { asset: BSC_TOKENS.USDT, uiAmount: 10 }, // 10 USDT
-      { asset: BSC_TOKENS.USDC, uiAmount: 10 }, // 10 USDC
-      { asset: BSC_TOKENS.BUSD, uiAmount: 10 }, // 10 BUSD
-    ],
+    network: EVM_NETWORK as `${string}:${string}`,
+    price: options.price,
     resourceInfo: {
-      url: `http://localhost:${PORT}/product-fixed`,
-      description: 'Premium Product (10 USD)',
+      url,
+      description: options.description,
       mimeType: 'application/json',
     },
   })
@@ -95,45 +102,46 @@ app.get('/product-fixed', async (req, res) => {
     res.setHeader('PAYMENT-RESPONSE', result.paymentResponseHeader)
   }
 
-  res.status(result.status).json(result.response)
+  // 如果成功且有额外数据，合并返回
+  if (result.success && options.extraData) {
+    res.status(result.status).json({ ...result.response, ...options.extraData })
+  } else {
+    res.status(result.status).json(result.response)
+  }
+}
+
+/**
+ * 示例 1: 固定价格，多种代币选项
+ * 场景：商品固定价格 10 USD，用户可选择 USDT、USDC 或 BUSD 支付
+ */
+app.get('/product-fixed', async (req, res) => {
+  await handlePayment(req, res, {
+    price: [
+      { asset: BSC_TOKENS.USDT, uiAmount: 10 },
+      { asset: BSC_TOKENS.USDC, uiAmount: 10 },
+      { asset: BSC_TOKENS.BUSD, uiAmount: 10 },
+    ],
+    description: 'Premium Product (10 USD)',
+  })
 })
 
 /**
  * 示例 2: 动态价格，多种代币选项
- *
  * 场景：根据请求参数动态计算价格
  */
 app.get('/api/data', async (req, res) => {
   const quantity = parseInt(req.query.quantity as string) || 1
-  const pricePerUnit = 0.5 // $0.5 per unit
+  const pricePerUnit = 0.5
   const totalPrice = quantity * pricePerUnit
 
-  const result = await server.process(req.header('PAYMENT-SIGNATURE'), {
-    scheme: 'exact:eip7702',
-    network: EVM_NETWORK,
+  await handlePayment(req, res, {
     price: [
       { asset: BSC_TOKENS.USDT, uiAmount: totalPrice },
       { asset: BSC_TOKENS.USDC, uiAmount: totalPrice },
       { asset: BSC_TOKENS.BUSD, uiAmount: totalPrice },
     ],
-    resourceInfo: {
-      url: `http://localhost:${PORT}/api/data?quantity=${quantity}`,
-      description: `API Data (${quantity} units × $${pricePerUnit})`,
-      mimeType: 'application/json',
-    },
-  })
-
-  if (result.paymentRequiredHeader) {
-    res.setHeader('PAYMENT-REQUIRED', result.paymentRequiredHeader)
-  }
-  if (result.paymentResponseHeader) {
-    res.setHeader('PAYMENT-RESPONSE', result.paymentResponseHeader)
-  }
-
-  if (result.success) {
-    // 返回数据
-    res.status(result.status).json({
-      ...result.response,
+    description: `API Data (${quantity} units × $${pricePerUnit})`,
+    extraData: {
       data: {
         quantity,
         totalPrice,
@@ -142,83 +150,51 @@ app.get('/api/data', async (req, res) => {
           value: `Item ${i + 1}`,
         })),
       },
-    })
-  } else {
-    res.status(result.status).json(result.response)
-  }
+    },
+  })
 })
 
 /**
  * 示例 3: 分级定价，不同代币不同价格
- *
- * 场景：高级用户用 USDT 便宜，普通用户用 USDC/BUSD
+ * 场景：USDT 用户享受优惠价格（8 USD），其他代币标准价格（10 USD）
  */
 app.get('/premium-tier', async (req, res) => {
-  const result = await server.process(req.header('PAYMENT-SIGNATURE'), {
-    scheme: 'exact:eip7702',
-    network: EVM_NETWORK,
+  await handlePayment(req, res, {
     price: [
-      { asset: BSC_TOKENS.USDT, uiAmount: 8 }, // VIP 价格
+      { asset: BSC_TOKENS.USDT, uiAmount: 8 },  // VIP 价格
       { asset: BSC_TOKENS.USDC, uiAmount: 10 }, // 标准价格
       { asset: BSC_TOKENS.BUSD, uiAmount: 10 }, // 标准价格
     ],
-    resourceInfo: {
-      url: `http://localhost:${PORT}/premium-tier`,
-      description: 'Premium Tier (USDT users get discount)',
-      mimeType: 'application/json',
-    },
+    description: 'Premium Tier (USDT users get 20% discount)',
   })
-
-  if (result.paymentRequiredHeader) {
-    res.setHeader('PAYMENT-REQUIRED', result.paymentRequiredHeader)
-  }
-  if (result.paymentResponseHeader) {
-    res.setHeader('PAYMENT-RESPONSE', result.paymentResponseHeader)
-  }
-
-  res.status(result.status).json(result.response)
 })
 
 /**
  * 示例 4: 条件性代币选项
- *
- * 场景：根据用户偏好只提供特定代币
+ * 场景：根据用户偏好只提供特定代币选项
  */
 app.get('/conditional', async (req, res) => {
-  const preferredToken = req.query.token as string
+  const preferredToken = (req.query.token as string)?.toUpperCase()
 
   // 动态构建代币选项
-  const tokenOptions: Array<{ asset: `0x${string}`; uiAmount: number }> = []
+  const priceOptions: Array<{ asset: `0x${string}`; uiAmount: number }> = []
 
   if (!preferredToken || preferredToken === 'USDT') {
-    tokenOptions.push({ asset: BSC_TOKENS.USDT, uiAmount: 5 })
+    priceOptions.push({ asset: BSC_TOKENS.USDT, uiAmount: 5 })
   }
   if (!preferredToken || preferredToken === 'USDC') {
-    tokenOptions.push({ asset: BSC_TOKENS.USDC, uiAmount: 5 })
+    priceOptions.push({ asset: BSC_TOKENS.USDC, uiAmount: 5 })
   }
   if (!preferredToken || preferredToken === 'BUSD') {
-    tokenOptions.push({ asset: BSC_TOKENS.BUSD, uiAmount: 5 })
+    priceOptions.push({ asset: BSC_TOKENS.BUSD, uiAmount: 5 })
   }
 
-  const result = await server.process(req.header('PAYMENT-SIGNATURE'), {
-    scheme: 'exact:eip7702',
-    network: EVM_NETWORK,
-    price: tokenOptions,
-    resourceInfo: {
-      url: `http://localhost:${PORT}/conditional${preferredToken ? `?token=${preferredToken}` : ''}`,
-      description: 'Conditional Token Options',
-      mimeType: 'application/json',
-    },
+  await handlePayment(req, res, {
+    price: priceOptions,
+    description: preferredToken
+      ? `Conditional Payment (${preferredToken} only)`
+      : 'Conditional Payment (all tokens)',
   })
-
-  if (result.paymentRequiredHeader) {
-    res.setHeader('PAYMENT-REQUIRED', result.paymentRequiredHeader)
-  }
-  if (result.paymentResponseHeader) {
-    res.setHeader('PAYMENT-RESPONSE', result.paymentResponseHeader)
-  }
-
-  res.status(result.status).json(result.response)
 })
 
 async function main(): Promise<void> {
@@ -228,15 +204,17 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log(`🚀 Multi-Token server listening at http://localhost:${PORT}`)
     // eslint-disable-next-line no-console
-    console.log('Available endpoints:')
+    console.log(`\n📋 Available endpoints:`)
     // eslint-disable-next-line no-console
-    console.log(`  - GET http://localhost:${PORT}/product-fixed`)
+    console.log(`   1. GET /product-fixed        - 固定价格，三种代币选项（10 USD）`)
     // eslint-disable-next-line no-console
-    console.log(`  - GET http://localhost:${PORT}/api/data?quantity=5`)
+    console.log(`   2. GET /api/data?quantity=N  - 动态价格（$0.5/单位）`)
     // eslint-disable-next-line no-console
-    console.log(`  - GET http://localhost:${PORT}/premium-tier`)
+    console.log(`   3. GET /premium-tier         - 分级定价（USDT 8 USD, 其他 10 USD）`)
     // eslint-disable-next-line no-console
-    console.log(`  - GET http://localhost:${PORT}/conditional?token=USDT`)
+    console.log(`   4. GET /conditional?token=X  - 条件性代币选项`)
+    // eslint-disable-next-line no-console
+    console.log(`\n💡 支持的代币: USDT, USDC, BUSD (BSC 主网)`)
   })
 }
 

@@ -385,6 +385,9 @@ importers:
       '@x402/core':
         specifier: ^2.0.0
         version: 2.0.0
+      '@x402/fetch':
+        specifier: ^2.0.0
+        version: 2.0.0(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)
       viem:
         specifier: ^2.21.26
         version: 2.42.1(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.1.12)
@@ -511,6 +514,9 @@ importers:
       x402x-evm:
         specifier: workspace:*
         version: link:../../../typescript/packages/x402x-evm
+      x402x-utils:
+        specifier: workspace:*
+        version: link:../../../typescript/packages/x402x-utils
     devDependencies:
       '@types/express':
         specifier: ^4.17.21
