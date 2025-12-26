@@ -327,9 +327,14 @@ export class ExactX402xEvmServer implements SchemeNetworkServer {
    */
   private convertToTokenAmount(decimalAmount: string, decimals: number): string {
     const amount = parseFloat(decimalAmount)
-    if (isNaN(amount)) throw new Error(`Invalid amount: ${decimalAmount}`)
-    const tokenAmount = Math.floor(amount * Math.pow(10, decimals))
-    return tokenAmount.toString()
+    if (isNaN(amount)) {
+      throw new Error(`Invalid amount: ${decimalAmount}`)
+    }
+    // Convert to smallest unit (e.g., for USDC with 6 decimals: 0.10 * 10^6 = 100000)
+    const [intPart, decPart = ''] = String(amount).split('.')
+    const paddedDec = decPart.padEnd(decimals, '0').slice(0, decimals)
+    const tokenAmount = (intPart + paddedDec).replace(/^0+/, '') || '0'
+    return tokenAmount
   }
 
   /**
